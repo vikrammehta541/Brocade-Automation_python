@@ -1,0 +1,111 @@
+import paramiko
+import pandas as pd
+import re
+import os
+
+def find_wwpn_connection(ip_address, username, password, wwpn_input):
+    try:
+        # Connect to the Brocade switch over SSH
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(ip_address, username=username, password=password)
+
+        # Send the nodefind command with the provided WWPN
+        command = f"nodefind {wwpn_input}"
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+
+        # Check if WWPN is found or not
+        if "No matching entries found" in output:
+            print(f"No WWPN Connections found for WWPN {wwpn_input} on switch {ip_address}.")
+        else:
+            print(f"WWPN Connections found for switch {ip_address} and WWPN {wwpn_input}:")
+            print(output)
+
+            # Check if the WWPN connection is "Remote" and skip detailed information if true
+            if "Remote" not in output:
+                # Find the "Port Index" in the output
+                port_index_pattern = re.compile(r'\bPort Index: (\d+)\b')
+                port_index_matches = port_index_pattern.findall(output)
+                if port_index_matches:
+                    for port_index in port_index_matches:
+                        print(f"Port index number: {port_index}")
+
+                        # Run portshow -i <port index number>
+                        portshow_command = f"portshow -i {port_index}"
+                        stdin, stdout, stderr = ssh_client.exec_command(portshow_command)
+                        portshow_output = stdout.read().decode()
+                        print(f"portshow -i {port_index}:")
+                        print(portshow_output)
+
+                        # Run porterrshow -i <port index number>
+                        porterrshow_command = f"porterrshow -i {port_index}"
+                        stdin, stdout, stderr = ssh_client.exec_command(porterrshow_command)
+                        porterrshow_output = stdout.read().decode()
+                        print(f"porterrshow -i {port_index}:")
+                        print(porterrshow_output)
+                else:
+                    print("Port index number not found in the output.")
+            else:
+                print("WWPN Connection is Remote. Skipping detailed information.")
+
+        # Close the SSH connection
+        ssh_client.close()
+
+    except paramiko.AuthenticationException:
+        print(f"Authentication failed for switch {ip_address}. Please check your credentials.")
+    except paramiko.SSHException as e:
+        print(f"Error occurred while connecting to the switch {ip_address}: {e}")
+    except Exception as e:
+        print(f"An error occurred for switch {ip_address}: {e}")
+
+def main():
+    try:
+        # Read switch details from the Excel file (replace 'path_to_excel_file.xlsx' with your file path)
+        file_path = r'C:\Users\methavi1\OneDrive - Alcon\ALCON-NVS-ALL\PYthon-New\Vikram_Python_Switch_Scripts\do not change- final script\switches.xlsx'
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError("Excel file not found.")
+
+        df = pd.read_excel(file_path)
+        # Remove leading and trailing spaces from column names
+        df.columns = df.columns.str.strip()
+
+        required_columns = ["Switch Name", "User Name", "Password"]
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError("Excel file must contain 'Switch Name', 'User Name', and 'Password' columns.")
+
+        log_file = "error_log.txt"
+        wwpns_log_file = "wwpns_log.csv"
+
+        # Ask the user to manually enter the WWPN to check
+        wwpn_input = input("Enter the WWPN to check: ")
+
+        # Iterate through each row in the Excel file
+        for index, row in df.iterrows():
+            switch_ip = row["Switch Name"]
+            switch_username = row["User Name"]
+            switch_password = row["Password"]
+
+            if not switch_password:
+                print(f"Skipping switch {switch_ip} - Empty password.")
+                continue
+
+            print(f"Processing switch: {switch_ip}")
+
+            # Call the function to find WWPN connections for the current switch and WWPN
+            find_wwpn_connection(switch_ip, switch_username, switch_password, wwpn_input)
+
+            print("=" * 30)
+
+    except FileNotFoundError as e:
+        print(f"File not found error: {e}")
+    except ValueError as e:
+        print(f"Value error: {e}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # Log exceptions to the error log file
+        with open(log_file, 'a') as error_log:
+            error_log.write(f"An error occurred: {e}\n")
+
+if __name__ == "__main__":
+    main()
